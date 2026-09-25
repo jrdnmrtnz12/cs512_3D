@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>UNM CS 412/512 HW3</title>
+  <style>
+    body {
+      background: #111;
+      color: #ccc;
+      font-family: monospace;
+    }
+
+    textarea {
+      background: #222;
+      color: #0f0;
+      font: 14px monospace;
+      width: 400px;
+      height: 250px;
+    }
+
+    canvas {
+      border: 1px solid #444;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Interactive Controls & Geometric Primitives</h2>
+  <p>Edit vertex and fragment shaders on the left to get the result instantly.<br>
+  Use mouse to drag and rotate the cube. <br>
+Use arrow keys and w, s keys to move the camera.<br>
+Save your code to source file if you want to save it.<br>
+Press F12 to see the console for debugging.</p>
+
+  <!-- #3: dropdown to pick which shape the buttons/sliders below affect, plus controls for its rotation -->
+  <div style="margin-bottom: 10px;">
+    <label>Select Object:
+      <select id="objectSelect">
+        <option value="cube">Cube</option>
+        <option value="basketball">Basketball</option>
+        <option value="football">Football</option>
+      </select>
+    </label>
+    &nbsp;
+    <button id="reverseXBtn">Reverse X-Rotation</button>
+    &nbsp;
+    <label>X-Rotation Speed:
+      <input type="range" id="speedSliderX" min="-3" max="3" step="0.1" value="0">
+    </label>
+    &nbsp;
+    <button id="reverseYBtn">Reverse Y-Rotation</button>
+    &nbsp;
+    <label>Y-Rotation Speed:
+      <input type="range" id="speedSliderY" min="-3" max="3" step="0.1" value="0">
+    </label>
+    &nbsp;
+    <!-- #5: bonus controls to manually nudge the selected shape's position -->
+    <label>Position X:
+      <input type="range" id="positionSliderX" min="-1" max="1" step="0.1" value="0">
+    </label>
+    &nbsp;
+    <label>Position Y:
+      <input type="range" id="positionSliderY" min="-1" max="1" step="0.1" value="0">
+    </label>
+  </div>
+
+  <div style="display: flex; gap: 10px; align-items: flex-start;">
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <div>
+        <b>Vertex Shader</b><br>
+        <textarea id="vertEditor"></textarea>
+      </div>
+      <div>
+        <b>Fragment Shader</b><br>
+        <textarea id="fragEditor"></textarea>
+      </div>
+    </div>
+    <div>
+      <canvas id="glcanvas" width="400" height="400"></canvas>
+    </div>
+  </div>
+
+  <!-- Vertex shader -->
+  <script id="vertex-shader" type="x-shader/x-vertex">#version 300 es
+in vec3 aPosition;
+in vec3 aColor;
+
+uniform float uTime; //time in sec
+uniform mat4 uModelViewMatrix;
+uniform mat4 uProjectionMatrix;
+uniform mat4 uModelTransformationMatrix;
+
+out vec3 vColor;
+
+void main() {
+  gl_Position = uProjectionMatrix * uModelViewMatrix * uModelTransformationMatrix * vec4(aPosition,1.0);
+  vColor = aColor;
+}
+</script>
+  <!-- Fragment Shader -->
+  <script id="fragment-shader" type="x-shader/x-fragment">#version 300 es
+precision mediump float;
+in vec3 vColor;
+
+out vec4 fragColor;
+
+void main() {
+  fragColor = vec4(vColor,1.0);
+}
+</script>
+
+  <script src="primitives.js"></script>
+  <script src="transformations.js"></script>
+
+  <script>
+    function createShader(gl, type, source) {
+      let shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(shader));
+      }
+      return shader;
+    }
+
+    function createProgram(gl, vsSource, fsSource) {
+      let vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+      let fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+      let prog = gl.createProgram();
+      gl.attachShader(prog, vs);
+      gl.attachShader(prog, fs);
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(prog));
+      }
+      return prog;
+    }
+
+    // WebGL setup
+    const canvas = document.getElementById("glcanvas");
+    const gl = canvas.getContext("webgl2");
+    if (!gl) alert("WebGL2 not supported");
+
+    let vertEditor = document.getElementById("vertEditor");
+    let fragEditor = document.getElementById("fragEditor");
+    vertEditor.value = document.getElementById("vertex-shader").textContent;
+    fragEditor.value = document.getElementById("fragment-shader").textContent;
+
+    let program, posLoc, colorLoc, timeLoc, uMVM, uPM, uMTM;
+    let vbo, nbo, ibo;
+    // #2: separate buffers for the basketball and football, alongside the cube's own
+    let vboBB, cboBB, iboBB;
+    let vboFB, cboFB, iboFB;
+
+    // Buffers
+    function initBuffers() {
+      vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+      nbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, nbo);
+      gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+
+      ibo = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+      vboBB = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vboBB);
+      gl.bufferData(gl.ARRAY_BUFFER, basketball.positions, gl.STATIC_DRAW);
+
+      cboBB = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, cboBB);
+      gl.bufferData(gl.ARRAY_BUFFER, basketball.colors, gl.STATIC_DRAW);
+
+      iboBB = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboBB);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, basketball.indices, gl.STATIC_DRAW);
+
+      vboFB = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vboFB);
+      gl.bufferData(gl.ARRAY_BUFFER, football.positions, gl.STATIC_DRAW);
+
+      cboFB = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, cboFB);
+      gl.bufferData(gl.ARRAY_BUFFER, football.colors, gl.STATIC_DRAW);
+
+      iboFB = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboFB);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, football.indices, gl.STATIC_DRAW);
+    }
+    initBuffers();
+
+    function initShaderProgram() {
+      try {
+        program = createProgram(gl, vertEditor.value, fragEditor.value);
+        gl.useProgram(program);
+        posLoc = gl.getAttribLocation(program, "aPosition");
+        colorLoc = gl.getAttribLocation(program, "aColor");
+        timeLoc = gl.getUniformLocation(program, "uTime");
+        uMVM = gl.getUniformLocation(program, "uModelViewMatrix");
+        uPM = gl.getUniformLocation(program, "uProjectionMatrix");
+        uMTM = gl.getUniformLocation(program, "uModelTransformationMatrix");
+      } catch (e) { console.error(e); }
+    }
+    initShaderProgram();
+    vertEditor.onkeyup = initShaderProgram;
+    fragEditor.onkeyup = initShaderProgram;
+
+    // Mouse and keyboard interactions
+    let mouseDown = false, lastX, lastY, cubeRotX = 0, cubeRotY = 0;
+    let camX = 0, camY = 0, camZ = -6;
+
+    canvas.addEventListener('mousedown', e => { mouseDown = true; lastX = e.clientX; lastY = e.clientY; });
+    canvas.addEventListener('mouseup', () => mouseDown = false);
+    canvas.addEventListener('mousemove', e => {
+      if (!mouseDown) return;
+      let dx = e.clientX - lastX;
+      let dy = e.clientY - lastY;
+      cubeRotY += dx * 0.01;
+      cubeRotX += dy * 0.01;
+      lastX = e.clientX; lastY = e.clientY;
+    });
+
+    document.addEventListener('keydown', e => {
+      const step = 0.2;
+      switch (e.key) {
+        case 'ArrowUp': camY -= step; break;
+        case 'ArrowDown': camY += step; break;
+        case 'ArrowLeft': camX += step; break;
+        case 'ArrowRight': camX -= step; break;
+        case 'w': camZ += step; break;
+        case 's': camZ -= step; break;
+      }
+    });
+
+    // #3: each shape keeps its own spin speed/direction on both axes, separate from dragging the cube with the mouse
+    let selectedObject = 'cube';
+    let rotationSpeedX = { cube: 0, basketball: 0, football: 0 };     // #3: how fast each shape spins on X
+    let rotationDirectionX = { cube: 1, basketball: 1, football: 1 }; // #3: which way each shape spins on X
+    let autoAngleX = { cube: 0, basketball: 0, football: 0 };         // #3: how far each shape has spun on X so far
+
+    let rotationSpeedY = { cube: 0, basketball: 0, football: 0 };     // #3: how fast each shape spins on Y
+    let rotationDirectionY = { cube: 1, basketball: 1, football: 1 }; // #3: which way each shape spins on Y
+    let autoAngleY = { cube: 0, basketball: 0, football: 0 };         // #3: how far each shape has spun on Y so far
+
+    // #5: extra x/y offset for each shape, set by the position sliders
+    let positionX = { cube: 0, basketball: 0, football: 0 };
+    let positionY = { cube: 0, basketball: 0, football: 0 };
+
+    document.getElementById("objectSelect").addEventListener("input", e => {
+      selectedObject = e.target.value;
+      document.getElementById("speedSliderX").value = rotationSpeedX[selectedObject];    // #3
+      document.getElementById("speedSliderY").value = rotationSpeedY[selectedObject];    // #3
+      document.getElementById("positionSliderX").value = positionX[selectedObject];      // #5
+      document.getElementById("positionSliderY").value = positionY[selectedObject];      // #5
+    });
+
+    document.getElementById("reverseXBtn").onclick = function () {
+      rotationDirectionX[selectedObject] *= -1;
+    };
+
+    document.getElementById("speedSliderX").addEventListener("input", e => {
+      rotationSpeedX[selectedObject] = parseFloat(e.target.value);
+    });
+
+    document.getElementById("reverseYBtn").onclick = function () {
+      rotationDirectionY[selectedObject] *= -1;
+    };
+
+    document.getElementById("speedSliderY").addEventListener("input", e => {
+      rotationSpeedY[selectedObject] = parseFloat(e.target.value);
+    });
+
+    document.getElementById("positionSliderX").addEventListener("input", e => {
+      positionX[selectedObject] = parseFloat(e.target.value);
+    });
+
+    document.getElementById("positionSliderY").addEventListener("input", e => {
+      positionY[selectedObject] = parseFloat(e.target.value);
+    });
+
+
+    // Projection setup
+    let fov = Math.PI / 4, aspect = canvas.width / canvas.height, zNear = 0.1, zFar = 100;
+
+    let orthoSize = 2.5;
+
+    // Perspective and Orthographic projection
+    let projPerspective = perspective(fov, aspect, zNear, zFar);
+
+    let projOrtho = matMul(
+    box2Cube(-orthoSize * aspect, orthoSize * aspect, -orthoSize, orthoSize, zNear, zFar),
+    flipZ()
+);
+    let proj = projOrtho;
+
+    let startTime = Date.now();
+    let lastFrameTime = Date.now();
+
+    function render() {
+      gl.enable(gl.DEPTH_TEST);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      // #3: spin each shape forward a little every frame, based on its own speed and direction
+      let now = Date.now();
+      let dt = (now - lastFrameTime) / 1000;
+      lastFrameTime = now;
+      autoAngleX.cube += rotationSpeedX.cube * rotationDirectionX.cube * dt;
+      autoAngleX.basketball += rotationSpeedX.basketball * rotationDirectionX.basketball * dt;
+      autoAngleX.football += rotationSpeedX.football * rotationDirectionX.football * dt;
+      autoAngleY.cube += rotationSpeedY.cube * rotationDirectionY.cube * dt;
+      autoAngleY.basketball += rotationSpeedY.basketball * rotationDirectionY.basketball * dt;
+      autoAngleY.football += rotationSpeedY.football * rotationDirectionY.football * dt;
+
+      // rotation matrices
+      let cx = Math.cos(cubeRotY), sx = Math.sin(cubeRotY);
+      let cy = Math.cos(cubeRotX), sy = Math.sin(cubeRotX);
+      let rotX = [1, 0, 0, 0, 0, cy, sy, 0, 0, -sy, cy, 0, 0, 0, 0, 1];
+      let rotY = [cx, 0, -sx, 0, 0, 1, 0, 0, sx, 0, cx, 0, 0, 0, 0, 1];
+      let cubeRotation = multiplyMat4(rotY, rotX);
+
+      // init model-view matrix as identity matrix
+      let modelViewMatrix = mat4Identity();
+      // init model transformation matrix as identity matrix
+      let modelTransformationMatrix = mat4Identity();
+
+      //delta time in ms
+      let deltaTime = Date.now() - startTime;
+      let t = deltaTime / 1000.0; // #4: seconds since the page loaded, used below to animate the bounce/pulse/pass motions
+      // object rotation
+      modelTransformationMatrix = multiplyMat4(modelTransformationMatrix, cubeRotation);
+      // #3: apply the cube's own spin on top of whatever the mouse drag already rotated it
+      modelTransformationMatrix = multiplyMat4(modelTransformationMatrix, mat4RotateX(mat4Identity(), autoAngleX.cube));
+      modelTransformationMatrix = multiplyMat4(modelTransformationMatrix, mat4RotateY(mat4Identity(), autoAngleY.cube));
+      // #4: makes the cube grow and shrink slightly on its own so it's not sitting still by default
+      let cubePulse = 1.0 + 0.15 * Math.sin(2.0 * t);
+      modelTransformationMatrix = mat4Scale(modelTransformationMatrix, [cubePulse, cubePulse, cubePulse]);
+      // #5: move the cube by whatever the position sliders are set to
+      modelTransformationMatrix[12] = positionX.cube;
+      modelTransformationMatrix[13] = positionY.cube;
+      // camera translation
+      modelViewMatrix = mat4Translate(modelViewMatrix, [camX, camY, camZ]);
+      
+      //set time in seconds
+      gl.uniform1f(timeLoc, deltaTime/1000.0);
+      gl.uniformMatrix4fv(uPM, false, proj);
+      gl.uniformMatrix4fv(uMVM, false, modelViewMatrix);
+      gl.uniformMatrix4fv(uMTM, false, modelTransformationMatrix);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.enableVertexAttribArray(posLoc);
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, nbo);
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+
+      // draw the object by the index order
+      gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_SHORT, 0);
+
+      // #2: basketball and football reuse the same drawing steps as the cube, just with their own buffers and their own position/rotation/scale each frame
+      // #3: basketball spins on its own, separate from the cube
+      // #4: bounce up and down over time, and squash wide/flat at the bottom, stretch tall/thin at the top
+      let bobPhase = Math.sin(1.5 * t);
+      let bobY = 0.8 * bobPhase; // #4: how high/low it bounces
+      let squashScaleY = 1.0 + 0.25 * bobPhase;  // #4: taller at the top of the bounce
+      let squashScaleXZ = 1.0 - 0.25 * bobPhase; // #4: wider at the bottom of the bounce
+      let basketballSpin = multiplyMat4(cubeRotation, mat4RotateX(mat4Identity(), autoAngleX.basketball));
+      basketballSpin = multiplyMat4(basketballSpin, mat4RotateY(mat4Identity(), autoAngleY.basketball));
+      basketballSpin = mat4Scale(basketballSpin, [squashScaleXZ, squashScaleY, squashScaleXZ]);
+      let basketballTransform = new Float32Array(basketballSpin);
+      basketballTransform[12] = -1.4 + positionX.basketball;
+      basketballTransform[13] = bobY + positionY.basketball;
+      gl.uniformMatrix4fv(uMTM, false, basketballTransform);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vboBB);
+      gl.enableVertexAttribArray(posLoc);
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, cboBB);
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboBB);
+      gl.drawElements(gl.TRIANGLES, basketball.indices.length, gl.UNSIGNED_SHORT, 0);
+
+      // #3: football spins on its own, separate from the cube
+      // #4: swings the football back and forth in an arc, like it's being thrown and caught
+      const passPeriod = 3.0; // #4: seconds for one full swing there and back
+      let passPhase = (t % passPeriod) / passPeriod;
+      let s = passPhase < 0.5 ? passPhase * 2 : 2 - passPhase * 2;
+      let arcX = 1.5 * (2 * s - 1); // #4: how far it swings left/right
+      let arcY = 1.3 * 4 * s * (1 - s); // #4: how high the arc goes
+      let footballSpin = multiplyMat4(cubeRotation, mat4RotateX(mat4Identity(), autoAngleX.football));
+      footballSpin = multiplyMat4(footballSpin, mat4RotateY(mat4Identity(), autoAngleY.football));
+      let footballTransform = new Float32Array(footballSpin);
+      // #4: centered on the middle of the screen so it swings across the whole visible area
+      footballTransform[12] = 0 + arcX + positionX.football;
+      footballTransform[13] = arcY + positionY.football;
+      gl.uniformMatrix4fv(uMTM, false, footballTransform);
+      gl.bindBuffer(gl.ARRAY_BUFFER, vboFB);
+      gl.enableVertexAttribArray(posLoc);
+      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, cboFB);
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, iboFB);
+      gl.drawElements(gl.TRIANGLES, football.indices.length, gl.UNSIGNED_SHORT, 0);
+    }
+
+    // Initialize when page loads
+    window.onload = function () {
+      setInterval(render, 30);
+    }
+
+  </script>
+</body>
+
+</html>
